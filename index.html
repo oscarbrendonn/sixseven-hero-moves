@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>67 Hero — Move Test</title>
+<style>
+  :root { --fg:#1d1d1f; --muted:#6e6e73; --pill:rgba(255,255,255,0.72); --line:rgba(0,0,0,0.08); }
+  html,body{margin:0;height:100%;overflow:hidden;background:#dfe3ea;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:var(--fg);-webkit-user-select:none;user-select:none;touch-action:none}
+  canvas#gl{display:block;width:100vw;height:100vh}
+  #lines{position:fixed;inset:0;pointer-events:none;mix-blend-mode:screen}
+  #flash{position:fixed;inset:0;pointer-events:none;opacity:0;background:radial-gradient(circle at 50% 55%, rgba(120,255,140,0.55) 0%, rgba(120,255,140,0.18) 35%, rgba(120,255,140,0) 70%)}
+  .hud{position:fixed;left:16px;top:14px;pointer-events:none}
+  .hud .t{font-size:15px;font-weight:600;letter-spacing:-0.01em}
+  .hud .s{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.5}
+  .keys{position:fixed;left:16px;bottom:16px;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+  .pill{background:var(--pill);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:10px;padding:6px 11px;font-size:12px;color:var(--fg);box-shadow:0 2px 10px rgba(0,0,0,0.06);white-space:nowrap}
+  .pill b{font-weight:600}
+  .state{position:fixed;right:16px;top:14px;display:flex;gap:6px;pointer-events:none}
+  .state .pill{min-width:54px;text-align:center}
+  .state .pill.on{background:#1d1d1f;color:#fff}
+  .power{position:fixed;right:16px;top:52px;pointer-events:none}
+  .bar{height:4px;width:120px;background:rgba(0,0,0,0.1);border-radius:2px;overflow:hidden;margin-top:6px}
+  .bar i{display:block;height:100%;width:100%;background:#2fd35f;border-radius:2px;transform-origin:left;transition:transform .08s linear}
+  /* touch controls */
+  #stick{position:fixed;left:26px;bottom:26px;width:128px;height:128px;border-radius:50%;background:rgba(255,255,255,0.35);border:1px solid rgba(0,0,0,0.08);backdrop-filter:blur(10px);display:none}
+  #knob{position:absolute;left:39px;top:39px;width:50px;height:50px;border-radius:50%;background:rgba(29,29,31,0.75)}
+  .btns{position:fixed;right:22px;bottom:26px;display:none;flex-direction:column;gap:12px;align-items:flex-end}
+  .btn{width:74px;height:74px;border-radius:50%;background:rgba(255,255,255,0.55);border:1px solid rgba(0,0,0,0.08);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--fg)}
+  .btn.hold{background:#1d1d1f;color:#fff}
+  .row{display:flex;gap:12px}
+  @media (pointer:coarse){ #stick{display:block} .btns{display:flex} .keys{display:none} }
+  #load{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--muted);background:#dfe3ea;transition:opacity .4s}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="lines"></canvas>
+<div id="flash"></div>
+
+<div class="hud">
+  <div class="t">67 Hero — Move Test</div>
+  <div class="s">Empty map · movement and effects only</div>
+</div>
+<div class="state">
+  <div class="pill" id="stIdle">idle</div>
+  <div class="pill" id="stRun">run</div>
+  <div class="pill" id="stSprint">sprint</div>
+  <div class="pill" id="stAir">air</div>
+</div>
+<div class="power"><div class="pill">Power<div class="bar"><i id="pw"></i></div></div></div>
+
+<div class="keys">
+  <div class="pill"><b>W A S D</b> move · <b>drag</b> look · <b>wheel</b> zoom</div>
+  <div class="pill"><b>Shift</b> sprint · <b>Space</b> jump · <b>Space in air</b> hover</div>
+  <div class="pill"><b>E</b> power burst · <b>R</b> respawn</div>
+</div>
+
+<div id="stick"><div id="knob"></div></div>
+<div class="btns">
+  <div class="row"><div class="btn" id="bPower">POWER</div><div class="btn" id="bJump">JUMP</div></div>
+  <div class="row"><div class="btn" id="bSprint">SPRINT</div></div>
+</div>
+<div id="load">Loading hero…</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ---------- renderer / scene ----------
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xdfe3ea);
+scene.fog = new THREE.Fog(0xdfe3ea, 60, 160);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 400);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xb9c2cc, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(18, 30, 12);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -40; sun.shadow.camera.right = 40;
+sun.shadow.camera.top = 40; sun.shadow.camera.bottom = -40;
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 90;
+sun.shadow.bias = -0.0006;
+scene.add(sun);
+
+// ---------- empty map ----------
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(400, 400),
+  new THREE.MeshStandardMaterial({ color: 0xeceef2, roughness: 0.95, metalness: 0 })
+);
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const grid = new THREE.GridHelper(400, 200, 0xc9cdd4, 0xd9dce2);
+grid.position.y = 0.01; scene.add(grid);
+
+// a few platforms to test jumps / hover / hard landings
+const platforms = [];
+function platform(x, z, w, d, h, color = 0xf5f6f8) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color, roughness: 0.9 }));
+  m.position.set(x, h / 2, z); m.castShadow = true; m.receiveShadow = true; scene.add(m);
+  platforms.push({ x, z, w, d, top: h });
+}
+platform(8, -6, 6, 6, 1.2);
+platform(15, -12, 6, 6, 2.6);
+platform(22, -20, 8, 8, 4.4);
+platform(-12, 8, 10, 4, 0.8);
+platform(-20, 18, 6, 6, 6.5);
+platform(0, 24, 14, 14, 0.5, 0xf0f1f4);
+
+function groundAt(x, z) {
+  let g = 0;
+  for (const p of platforms) {
+    if (Math.abs(x - p.x) <= p.w / 2 && Math.abs(z - p.z) <= p.d / 2 && p.top > g) g = p.top;
+  }
+  return g;
+}
+
+// ---------- sprite textures ----------
+function softCircle(size = 64, inner = 0.1) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const g = c.getContext('2d');
+  const r = g.createRadialGradient(size / 2, size / 2, size * inner, size / 2, size / 2, size / 2);
+  r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.45, 'rgba(255,255,255,0.55)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r; g.fillRect(0, 0, size, size);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const texSoft = softCircle(64, 0.05);
+const texHard = softCircle(64, 0.35);
+
+// ---------- particle pools (Points) ----------
+class Pool {
+  constructor({ count, size, color, additive, tex, gravity = 0, drag = 1, shrink = true }) {
+    this.n = count; this.gravity = gravity; this.drag = drag; this.shrink = shrink;
+    this.pos = new Float32Array(count * 3); this.vel = new Float32Array(count * 3);
+    this.life = new Float32Array(count); this.max = new Float32Array(count);
+    this.size0 = new Float32Array(count); this.alpha = new Float32Array(count);
+    this.sizeAttr = new Float32Array(count); this.colors = new Float32Array(count * 3);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(this.sizeAttr, 1));
+    geo.setAttribute('aAlpha', new THREE.BufferAttribute(this.alpha, 1));
+    geo.setAttribute('aColor', new THREE.BufferAttribute(this.colors, 3));
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uTex: { value: tex }, uScale: { value: innerHeight * 0.5 }, uBase: { value: size } },
+      vertexShader: `attribute float aSize; attribute float aAlpha; attribute vec3 aColor; varying float vA; varying vec3 vC; uniform float uScale; uniform float uBase;
+        void main(){ vA=aAlpha; vC=aColor; vec4 mv=modelViewMatrix*vec4(position,1.0); gl_PointSize = uBase*aSize*uScale/max(1.0,-mv.z); gl_Position=projectionMatrix*mv; }`,
+      fragmentShader: `uniform sampler2D uTex; varying float vA; varying vec3 vC; void main(){ vec4 t=texture2D(uTex,gl_PointCoord); gl_FragColor=vec4(vC, t.a*vA); if(gl_FragColor.a<0.01) discard; }`,
+      transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending
+    });
+    this.mat = mat; this.baseColor = new THREE.Color(color);
+    this.points = new THREE.Points(geo, mat); this.points.frustumCulled = false; scene.add(this.points);
+    this.cursor = 0;
+  }
+  emit(p, v, life, size, color) {
+    const i = this.cursor; this.cursor = (this.cursor + 1) % this.n;
+    this.pos[i * 3] = p.x; this.pos[i * 3 + 1] = p.y; this.pos[i * 3 + 2] = p.z;
+    this.vel[i * 3] = v.x; this.vel[i * 3 + 1] = v.y; this.vel[i * 3 + 2] = v.z;
+    this.life[i] = life; this.max[i] = life; this.size0[i] = size;
+    const c = color ? new THREE.Color(color) : this.baseColor;
+    this.colors[i * 3] = c.r; this.colors[i * 3 + 1] = c.g; this.colors[i * 3 + 2] = c.b;
+  }
+  update(dt) {
+    for (let i = 0; i < this.n; i++) {
+      if (this.life[i] <= 0) { this.alpha[i] = 0; continue; }
+      this.life[i] -= dt;
+      const k = Math.max(0, this.life[i] / this.max[i]);
+      this.vel[i * 3 + 1] += this.gravity * dt;
+      this.vel[i * 3] *= this.drag; this.vel[i * 3 + 1] *= this.drag; this.vel[i * 3 + 2] *= this.drag;
+      this.pos[i * 3] += this.vel[i * 3] * dt; this.pos[i * 3 + 1] += this.vel[i * 3 + 1] * dt; this.pos[i * 3 + 2] += this.vel[i * 3 + 2] * dt;
+      this.alpha[i] = k < 0.25 ? k / 0.25 : 1;
+      this.sizeAttr[i] = this.size0[i] * (this.shrink ? (0.35 + 0.65 * k) : (1.6 - 0.6 * k));
+    }
+    const g = this.points.geometry;
+    g.attributes.position.needsUpdate = true; g.attributes.aSize.needsUpdate = true;
+    g.attributes.aAlpha.needsUpdate = true; g.attributes.aColor.needsUpdate = true;
+  }
+}
+const dust   = new Pool({ count: 300, size: 0.55, color: 0xffffff, additive: false, tex: texSoft, gravity: 0.6, drag: 0.94, shrink: false });
+const sparks = new Pool({ count: 600, size: 0.17, color: 0x7dff8a, additive: true, tex: texHard, gravity: -9, drag: 0.985 });
+const glow   = new Pool({ count: 300, size: 0.9, color: 0x9dffb0, additive: true, tex: texSoft, gravity: 1.2, drag: 0.9 });
+const trail  = new Pool({ count: 400, size: 0.32, color: 0xffffff, additive: true, tex: texSoft, gravity: 0, drag: 0.9 });
+
+// ---------- shards (white spiky burst on hard landing) ----------
+const SHARDS = 90;
+const shardGeo = new THREE.PlaneGeometry(0.16, 0.7);
+const shardMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.95, depthWrite: false });
+const shards = new THREE.InstancedMesh(shardGeo, shardMat, SHARDS); shards.frustumCulled = false; scene.add(shards);
+const shardData = Array.from({ length: SHARDS }, () => ({ life: 0, max: 1, p: new THREE.Vector3(), v: new THREE.Vector3(), q: new THREE.Quaternion(), s: 1 }));
+let shardCursor = 0;
+const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new THREE.Vector3();
+function burstShards(center, n = 46, power = 1) {
+  for (let k = 0; k < n; k++) {
+    const d = shardData[shardCursor]; shardCursor = (shardCursor + 1) % SHARDS;
+    const a = Math.random() * Math.PI * 2, up = 0.35 + Math.random() * 0.9, sp = (5 + Math.random() * 6) * power;
+    d.p.copy(center); d.v.set(Math.cos(a) * sp, up * sp * 0.9, Math.sin(a) * sp);
+    d.life = d.max = 0.5 + Math.random() * 0.45; d.s = 0.6 + Math.random() * 1.1;
+    _e.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28); d.q.setFromEuler(_e);
+  }
+}
+function updateShards(dt) {
+  for (let i = 0; i < SHARDS; i++) {
+    const d = shardData[i];
+    if (d.life <= 0) { _m.makeScale(0, 0, 0); shards.setMatrixAt(i, _m); continue; }
+    d.life -= dt; d.v.y -= 20 * dt; d.v.multiplyScalar(0.96); d.p.addScaledVector(d.v, dt);
+    if (d.p.y < groundAt(d.p.x, d.p.z) + 0.05) { d.p.y = groundAt(d.p.x, d.p.z) + 0.05; d.v.y = Math.abs(d.v.y) * 0.3; }
+    const k = Math.max(0, d.life / d.max); _e.set(d.v.z * 0.4, d.life * 9, d.v.x * 0.4); _q.setFromEuler(_e).multiply(d.q);
+    _s.setScalar(d.s * (0.2 + 0.8 * k)); _m.compose(d.p, _q, _s); shards.setMatrixAt(i, _m);
+  }
+  shards.instanceMatrix.needsUpdate = true;
+}
+
+// ---------- rings (shockwaves) ----------
+const rings = [];
+function ring(center, color, { r0 = 0.3, r1 = 5, life = 0.5, y = 0.06, width = 0.35, flat = true } = {}) {
+  const m = new THREE.Mesh(new THREE.RingGeometry(1 - width, 1, 64), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+  if (flat) m.rotation.x = -Math.PI / 2;
+  m.position.copy(center); m.position.y = flat ? groundAt(center.x, center.z) + y : center.y;
+  scene.add(m); rings.push({ m, t: 0, life, r0, r1 });
+}
+function updateRings(dt) {
+  for (let i = rings.length - 1; i >= 0; i--) {
+    const r = rings[i]; r.t += dt; const k = Math.min(1, r.t / r.life), e = 1 - Math.pow(1 - k, 3);
+    const rad = r.r0 + (r.r1 - r.r0) * e; r.m.scale.set(rad, rad, rad); r.m.material.opacity = 0.9 * (1 - k);
+    if (k >= 1) { scene.remove(r.m); r.m.geometry.dispose(); r.m.material.dispose(); rings.splice(i, 1); }
+  }
+}
+
+// ---------- sprint bubble (fresnel shell) ----------
+const bubble = new THREE.Mesh(new THREE.SphereGeometry(1.25, 40, 28), new THREE.ShaderMaterial({
+  uniforms: { uT: { value: 0 }, uA: { value: 0 }, uC: { value: new THREE.Color(0x8fe9ff) } },
+  vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP; void main(){ vN=normalize(normalMatrix*normal); vec4 mv=modelViewMatrix*vec4(position,1.0); vV=normalize(-mv.xyz); vP=position; gl_Position=projectionMatrix*mv; }`,
+  fragmentShader: `uniform float uT; uniform float uA; uniform vec3 uC; varying vec3 vN; varying vec3 vV; varying vec3 vP;
+    void main(){ float f=pow(1.0-max(0.0,dot(vN,vV)),2.6); float band=0.5+0.5*sin(vP.y*9.0+uT*6.0); float a=(f*1.1+0.05+band*0.05)*uA; gl_FragColor=vec4(mix(uC,vec3(1.0),f*0.7), a); }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+}));
+bubble.visible = false; scene.add(bubble);
+
+// spawn bubble (teal sphere that pops)
+let spawnT = -1;
+const spawnBubble = new THREE.Mesh(new THREE.SphereGeometry(1.5, 40, 28), new THREE.MeshBasicMaterial({ color: 0x7ff0ff, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending }));
+spawnBubble.visible = false; scene.add(spawnBubble);
+
+// ---------- speed lines overlay ----------
+const lc = document.getElementById('lines'), lg = lc.getContext('2d');
+function resizeLines() { lc.width = innerWidth * Math.min(devicePixelRatio, 2); lc.height = innerHeight * Math.min(devicePixelRatio, 2); }
+resizeLines();
+function drawSpeedLines(strength, tSec) {
+  lg.clearRect(0, 0, lc.width, lc.height);
+  if (strength <= 0.01) return;
+  const cx = lc.width / 2, cy = lc.height * 0.52, R = Math.hypot(cx, cy);
+  const n = Math.floor(70 * strength);
+  lg.lineCap = 'round';
+  for (let i = 0; i < n; i++) {
+    const seed = i * 12.9898 + Math.floor(tSec * 22) * 0.37;
+    const a = (i / n) * Math.PI * 2 + Math.sin(seed) * 0.05;
+    const len = (0.12 + 0.28 * Math.abs(Math.sin(seed * 3.1))) * R * strength;
+    const inner = R * (0.42 + 0.22 * Math.abs(Math.cos(seed * 1.7)));
+    lg.strokeStyle = `rgba(255,255,255,${0.55 * strength})`; lg.lineWidth = 1.4 * Math.min(devicePixelRatio, 2);
+    lg.beginPath(); lg.moveTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner); lg.lineTo(cx + Math.cos(a) * (inner + len), cy + Math.sin(a) * (inner + len)); lg.stroke();
+  }
+}
+
+// ---------- hero ----------
+const hero = new THREE.Group(); scene.add(hero);
+let mixer, clips = {}, current = null, model;
+const loader = new GLTFLoader();
+loader.load('./hero.glb', (g) => {
+  model = g.scene; model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; if (o.material) o.material.side = THREE.FrontSide; } });
+  const box = new THREE.Box3().setFromObject(model); const h = box.max.y - box.min.y; const s = 1.5 / h; model.scale.setScalar(s);
+  box.setFromObject(model); model.position.y -= box.min.y; model.position.x -= (box.min.x + box.max.x) / 2; model.position.z -= (box.min.z + box.max.z) / 2;
+  hero.add(model);
+  mixer = new THREE.AnimationMixer(model);
+  for (const c of g.animations) { const a = mixer.clipAction(c); clips[c.name] = a; }
+  for (const n of ['jump', 'land', 'celebrate']) if (clips[n]) { clips[n].setLoop(THREE.LoopOnce); clips[n].clampWhenFinished = true; }
+  play('idle', 0);
+  document.getElementById('load').style.opacity = 0; setTimeout(() => document.getElementById('load').remove(), 450);
+  respawn();
+}, undefined, (e) => { document.getElementById('load').textContent = 'Could not load hero.glb'; console.error(e); });
+
+function play(name, fade = 0.18, timeScale = 1) {
+  const a = clips[name]; if (!a) return;
+  if (current === a) { a.timeScale = timeScale; return; }
+  a.reset(); a.timeScale = timeScale; a.enabled = true; a.setEffectiveWeight(1);
+  if (current) { a.crossFadeFrom(current, fade, true); } else a.play();
+  a.play(); current = a;
+}
+
+// ---------- input ----------
+const keys = {};
+addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'Space') { jumpPressed(); e.preventDefault(); } if (e.code === 'KeyE') powerPressed(); if (e.code === 'KeyR') respawn(); });
+addEventListener('keyup', e => { keys[e.code] = false; });
+let yaw = Math.PI * 0.85, pitch = 0.28, dist = 6.2;
+let dragging = false, lx = 0, ly = 0, dragId = null;
+canvas.addEventListener('pointerdown', e => { if (e.pointerType === 'touch' && e.clientX < innerWidth * 0.45) return; dragging = true; dragId = e.pointerId; lx = e.clientX; ly = e.clientY; });
+addEventListener('pointermove', e => { if (!dragging || e.pointerId !== dragId) return; yaw -= (e.clientX - lx) * 0.005; pitch = THREE.MathUtils.clamp(pitch + (e.clientY - ly) * 0.004, -0.2, 1.1); lx = e.clientX; ly = e.clientY; });
+addEventListener('pointerup', e => { if (e.pointerId === dragId) dragging = false; });
+addEventListener('wheel', e => { dist = THREE.MathUtils.clamp(dist + e.deltaY * 0.004, 3, 12); }, { passive: true });
+
+// touch stick + buttons
+const stick = document.getElementById('stick'), knob = document.getElementById('knob'); let stickVec = { x: 0, y: 0 }, stickId = null;
+stick.addEventListener('pointerdown', e => { stickId = e.pointerId; moveStick(e); });
+addEventListener('pointermove', e => { if (e.pointerId === stickId) moveStick(e); });
+addEventListener('pointerup', e => { if (e.pointerId === stickId) { stickId = null; stickVec = { x: 0, y: 0 }; knob.style.left = '39px'; knob.style.top = '39px'; } });
+function moveStick(e) { const r = stick.getBoundingClientRect(); let dx = e.clientX - (r.left + 64), dy = e.clientY - (r.top + 64); const l = Math.hypot(dx, dy) || 1, m = Math.min(l, 44); dx = dx / l * m; dy = dy / l * m; knob.style.left = (39 + dx) + 'px'; knob.style.top = (39 + dy) + 'px'; stickVec = { x: dx / 44, y: dy / 44 }; }
+let touchSprint = false;
+document.getElementById('bJump').addEventListener('pointerdown', e => { e.preventDefault(); jumpPressed(); });
+document.getElementById('bPower').addEventListener('pointerdown', e => { e.preventDefault(); powerPressed(); });
+const bS = document.getElementById('bSprint'); bS.addEventListener('pointerdown', e => { e.preventDefault(); touchSprint = !touchSprint; bS.classList.toggle('hold', touchSprint); });
+
+// ---------- character state ----------
+const S = { pos: new THREE.Vector3(0, 0, 0), vel: new THREE.Vector3(), speed: 0, grounded: true, hover: false, hoverT: 0, jumpsLeft: 1, sprint: 0, landT: 0, powerT: 0, powerCd: 0, dustT: 0, trailT: 0, fallPeak: 0, lockT: 0, heading: 0 };
+const WALK = 3.4, RUN = 6.8, SPRINT = 12.5, JUMP_V = 9.2, GRAV = 24, HOVER_MAX = 1.5;
+let shake = 0; const shakeV = new THREE.Vector3();
+const tmpV = new THREE.Vector3(), fwd = new THREE.Vector3(), right = new THREE.Vector3();
+
+function respawn() {
+  S.pos.set(0, 0, 0); S.vel.set(0, 0, 0); S.grounded = true; S.hover = false; S.jumpsLeft = 1; S.lockT = 0;
+  spawnT = 0; spawnBubble.visible = true;
+  ring(S.pos, 0x7ff0ff, { r0: 0.4, r1: 3.2, life: 0.6 });
+  for (let i = 0; i < 40; i++) { const a = Math.random() * 6.28; sparks.emit(new THREE.Vector3(S.pos.x, 0.9, S.pos.z), new THREE.Vector3(Math.cos(a) * 3, 2 + Math.random() * 3, Math.sin(a) * 3), 0.8, 1, 0x9ff5ff); }
+}
+function jumpPressed() {
+  if (S.lockT > 0) return;
+  if (S.grounded) {
+    S.vel.y = JUMP_V; S.grounded = false; S.jumpsLeft = 1;
+    play('jump', 0.08);
+    for (let i = 0; i < 12; i++) { const a = Math.random() * 6.28; dust.emit(new THREE.Vector3(S.pos.x + Math.cos(a) * 0.3, S.pos.y + 0.08, S.pos.z + Math.sin(a) * 0.3), new THREE.Vector3(Math.cos(a) * 1.6, 0.6, Math.sin(a) * 1.6), 0.45, 0.8); }
+    ring(S.pos, 0xffffff, { r0: 0.3, r1: 1.6, life: 0.3, width: 0.5 });
+  } else if (S.jumpsLeft > 0 && !S.hover) {
+    // drift jump → hover
+    S.jumpsLeft = 0; S.hover = true; S.hoverT = 0; S.vel.y = Math.max(S.vel.y, 5.2);
+    play('fall', 0.12, 0.35);
+    const c = new THREE.Vector3(S.pos.x, S.pos.y + 0.15, S.pos.z);
+    ring(c, 0xffffff, { r0: 0.2, r1: 2.2, life: 0.35, flat: true, y: 0 });
+    for (let i = 0; i < 26; i++) { const a = Math.random() * 6.28; dust.emit(c.clone(), new THREE.Vector3(Math.cos(a) * 2.4, -2.2 - Math.random() * 2, Math.sin(a) * 2.4), 0.5, 1.1); }
+    for (let i = 0; i < 18; i++) { const a = Math.random() * 6.28; sparks.emit(c.clone(), new THREE.Vector3(Math.cos(a) * 2, -1, Math.sin(a) * 2), 0.5, 0.9, 0xffffff); }
+  }
+}
+function powerPressed() {
+  if (S.powerCd > 0 || S.lockT > 0) return;
+  S.powerCd = 2.4; S.powerT = 1.0; S.lockT = S.grounded ? 0.55 : 0.2;
+  if (S.grounded) play('celebrate', 0.08, 1.4);
+  const c = new THREE.Vector3(S.pos.x, S.pos.y + 0.8, S.pos.z);
+  ring(S.pos, 0x6dff7c, { r0: 0.4, r1: 7.5, life: 0.65, width: 0.22 });
+  ring(S.pos, 0xc8ffd0, { r0: 0.2, r1: 4, life: 0.35, width: 0.5 });
+  const v = new THREE.Vector3(c.x, c.y, c.z);
+  const vr = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 48), new THREE.MeshBasicMaterial({ color: 0x8dffa0, transparent: true, opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+  vr.position.copy(v); vr.rotation.y = yaw; scene.add(vr); rings.push({ m: vr, t: 0, life: 0.45, r0: 0.5, r1: 4.5 });
+  for (let i = 0; i < 160; i++) { const a = Math.random() * 6.28, up = Math.random() * 2 - 0.4, sp = 5 + Math.random() * 9; sparks.emit(c.clone(), new THREE.Vector3(Math.cos(a) * sp, up * sp * 0.6 + 3, Math.sin(a) * sp), 0.7 + Math.random() * 0.6, 0.7 + Math.random() * 0.9, Math.random() < 0.8 ? 0x6dff7c : 0xffffff); }
+  for (let i = 0; i < 30; i++) { const a = Math.random() * 6.28; glow.emit(new THREE.Vector3(c.x + Math.cos(a) * 0.5, c.y + Math.random() - 0.4, c.z + Math.sin(a) * 0.5), new THREE.Vector3(Math.cos(a) * 1.2, 1.5 + Math.random() * 2, Math.sin(a) * 1.2), 0.9, 1.2 + Math.random()); }
+  shake = 0.35; flash(0.85);
+}
+const flashEl = document.getElementById('flash'); let flashA = 0;
+function flash(a) { flashA = a; }
+
+// ---------- update ----------
+const clock = new THREE.Clock(); let tSec = 0;
+function update(dt) {
+  tSec += dt; dt = Math.min(dt, 0.05);
+  const wantSprint = !!keys['ShiftLeft'] || !!keys['ShiftRight'] || touchSprint;
+  // move input relative to camera
+  let ix = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0) + stickVec.x;
+  let iz = (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0) - (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0) + stickVec.y;
+  const il = Math.hypot(ix, iz); if (il > 1) { ix /= il; iz /= il; }
+  const moving = il > 0.08 && S.lockT <= 0;
+  fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw)); right.set(fwd.z, 0, -fwd.x);
+  const target = moving ? (wantSprint ? SPRINT : (il < 0.55 ? WALK : RUN)) * Math.min(1, il / 0.55) : 0;
+  const accel = S.grounded ? 22 : 9;
+  S.speed += THREE.MathUtils.clamp(target - S.speed, -accel * dt, accel * dt);
+  S.sprint += THREE.MathUtils.clamp(((wantSprint && moving && S.speed > 7) ? 1 : 0) - S.sprint, -3 * dt, 2.2 * dt);
+  if (moving) { tmpV.copy(fwd).multiplyScalar(-iz).addScaledVector(right, -ix).normalize(); S.heading = Math.atan2(tmpV.x, tmpV.z); }
+  const hx = Math.sin(S.heading), hz = Math.cos(S.heading);
+  S.vel.x = hx * S.speed; S.vel.z = hz * S.speed;
+  // vertical
+  if (S.hover) { S.hoverT += dt; S.vel.y = Math.max(S.vel.y - GRAV * 0.35 * dt, -1.6); if (S.hoverT > HOVER_MAX) S.hover = false; }
+  else S.vel.y -= GRAV * dt;
+  S.pos.addScaledVector(S.vel, dt);
+  if (!S.grounded) S.fallPeak = Math.min(S.fallPeak, S.vel.y);
+  const g = groundAt(S.pos.x, S.pos.z);
+  if (S.pos.y <= g && S.vel.y <= 0) {
+    if (!S.grounded) {
+      const hard = S.fallPeak < -11 || (S.hover && S.fallPeak < -1); S.hover = false;
+      S.landT = 0.22; play('land', 0.05, 1.6);
+      const c = new THREE.Vector3(S.pos.x, g, S.pos.z);
+      if (S.fallPeak < -11) { burstShards(c.clone().setY(g + 0.2), 52, 1.15); ring(c, 0xffffff, { r0: 0.4, r1: 5.5, life: 0.45 }); ring(c, 0x6dff7c, { r0: 0.3, r1: 3.5, life: 0.4, width: 0.6 }); shake = 0.45; for (let i = 0; i < 40; i++) { const a = Math.random() * 6.28; dust.emit(c.clone().setY(g + 0.1), new THREE.Vector3(Math.cos(a) * 5, 1.5, Math.sin(a) * 5), 0.7, 1.6); } }
+      else { for (let i = 0; i < 18; i++) { const a = Math.random() * 6.28; dust.emit(c.clone().setY(g + 0.08), new THREE.Vector3(Math.cos(a) * 2.4, 0.8, Math.sin(a) * 2.4), 0.5, 1.0); } ring(c, 0xffffff, { r0: 0.3, r1: 2.2, life: 0.3, width: 0.5 }); }
+    }
+    S.pos.y = g; S.vel.y = 0; S.grounded = true; S.jumpsLeft = 1; S.fallPeak = 0;
+  } else if (S.pos.y > g + 0.02) { S.grounded = false; }
+  // walked off an edge
+  if (S.grounded && S.pos.y > g + 0.01) { S.grounded = false; }
+  // timers
+  S.landT = Math.max(0, S.landT - dt); S.lockT = Math.max(0, S.lockT - dt); S.powerCd = Math.max(0, S.powerCd - dt); S.powerT = Math.max(0, S.powerT - dt);
+  // animation
+  if (S.lockT <= 0 && S.landT <= 0) {
+    if (S.grounded) { if (S.speed < 0.3) play('idle', 0.2); else if (S.speed < 4.6) play('walk', 0.15, S.speed / WALK); else play('run', 0.12, Math.min(1.6, S.speed / RUN)); }
+    else if (S.hover) play('fall', 0.15, 0.35);
+    else if (S.vel.y > 1.5) { if (current !== clips['jump']) play('jump', 0.08); }
+    else play('fall', 0.2, 1);
+  }
+  hero.position.copy(S.pos); hero.rotation.y = S.heading;
+  // lean into sprint
+  hero.rotation.x = THREE.MathUtils.lerp(hero.rotation.x, S.sprint * 0.16, 8 * dt);
+  if (mixer) mixer.update(dt);
+  // effects: sprint bubble + trail + fov
+  bubble.visible = S.sprint > 0.02; bubble.position.set(S.pos.x, S.pos.y + 0.85, S.pos.z); bubble.material.uniforms.uT.value = tSec; bubble.material.uniforms.uA.value = S.sprint * 0.9;
+  bubble.scale.setScalar(0.85 + 0.15 * S.sprint + Math.sin(tSec * 9) * 0.02 * S.sprint);
+  if (S.sprint > 0.05 && S.grounded) { S.trailT -= dt; if (S.trailT <= 0) { S.trailT = 0.018; for (let i = 0; i < 3; i++) trail.emit(new THREE.Vector3(S.pos.x - hx * 0.4 + (Math.random() - 0.5) * 0.5, S.pos.y + 0.15 + Math.random() * 0.5, S.pos.z - hz * 0.4 + (Math.random() - 0.5) * 0.5), new THREE.Vector3(-hx * 6 + (Math.random() - 0.5) * 2, 1.2 + Math.random(), -hz * 6 + (Math.random() - 0.5) * 2), 0.32, 0.9 + Math.random() * 0.8, Math.random() < 0.5 ? 0xffffff : 0xa8f0ff); } }
+  if (S.grounded && S.speed > 2.5) { S.dustT -= dt; if (S.dustT <= 0) { S.dustT = S.sprint > 0.5 ? 0.06 : 0.16; dust.emit(new THREE.Vector3(S.pos.x - hx * 0.25 + (Math.random() - 0.5) * 0.3, S.pos.y + 0.05, S.pos.z - hz * 0.25 + (Math.random() - 0.5) * 0.3), new THREE.Vector3(-hx * 1.2 + (Math.random() - 0.5), 0.9, -hz * 1.2 + (Math.random() - 0.5)), 0.5, 0.6 + S.sprint * 0.6); } }
+  if (S.hover) { for (let i = 0; i < 2; i++) sparks.emit(new THREE.Vector3(S.pos.x + (Math.random() - 0.5) * 0.6, S.pos.y + 0.1, S.pos.z + (Math.random() - 0.5) * 0.6), new THREE.Vector3((Math.random() - 0.5) * 1.5, -3.5, (Math.random() - 0.5) * 1.5), 0.4, 0.6, 0xffffff); }
+  if (S.powerT > 0) { const k = S.powerT; for (let i = 0; i < 4; i++) { const a = tSec * 9 + i * 1.57, r = 0.9 + (1 - k) * 0.8; glow.emit(new THREE.Vector3(S.pos.x + Math.cos(a) * r, S.pos.y + 0.2 + (1 - k) * 1.8 + Math.random() * 0.3, S.pos.z + Math.sin(a) * r), new THREE.Vector3(0, 1.5, 0), 0.45, 0.8, 0x6dff7c); } }
+  // spawn bubble
+  if (spawnT >= 0) { spawnT += dt; spawnBubble.position.set(S.pos.x, S.pos.y + 0.85, S.pos.z); const k = spawnT / 1.1; spawnBubble.scale.setScalar(1 + k * 0.25); spawnBubble.material.opacity = 0.22 * (1 - k); if (k >= 1) { spawnT = -1; spawnBubble.visible = false; } }
+  // pools
+  dust.update(dt); sparks.update(dt); glow.update(dt); trail.update(dt); updateShards(dt); updateRings(dt);
+  // camera
+  const camT = new THREE.Vector3(S.pos.x, S.pos.y + 1.1, S.pos.z);
+  const off = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)).multiplyScalar(dist);
+  const desired = camT.clone().add(off);
+  desired.y = Math.max(desired.y, groundAt(desired.x, desired.z) + 0.5);
+  camera.position.lerp(desired, 1 - Math.pow(0.001, dt));
+  shake = Math.max(0, shake - dt * 1.6);
+  shakeV.set((Math.random() - 0.5), (Math.random() - 0.5), 0).multiplyScalar(shake * 0.35);
+  camera.position.add(shakeV);
+  camera.lookAt(camT);
+  camera.fov = THREE.MathUtils.lerp(camera.fov, 55 + 13 * S.sprint, 6 * dt); camera.updateProjectionMatrix();
+  drawSpeedLines(S.sprint * (0.5 + 0.5 * Math.min(1, S.speed / SPRINT)), tSec);
+  flashA = Math.max(0, flashA - dt * 2.4); flashEl.style.opacity = flashA;
+  // hud
+  const st = (id, on) => document.getElementById(id).classList.toggle('on', on);
+  st('stIdle', S.grounded && S.speed < 0.3); st('stRun', S.grounded && S.speed >= 0.3 && S.sprint < 0.5); st('stSprint', S.sprint >= 0.5); st('stAir', !S.grounded);
+  document.getElementById('pw').style.transform = `scaleX(${1 - S.powerCd / 2.4})`;
+}
+renderer.setAnimationLoop(() => { update(clock.getDelta()); renderer.render(scene, camera); });
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); resizeLines(); for (const p of [dust, sparks, glow, trail]) p.mat.uniforms.uScale.value = innerHeight * 0.5; });
+</script>
+</body>
+</html>
