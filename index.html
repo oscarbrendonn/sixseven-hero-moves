@@ -248,6 +248,18 @@ const bolts = new THREE.InstancedMesh(boltGeo, new THREE.MeshBasicMaterial({ col
 for (let i = 0; i < BOLTS; i++) bolts.setColorAt(i, sprayCol.set(0xffffff));
 const boltData = Array.from({ length: BOLTS }, () => ({ life: 0, max: 1, p: new THREE.Vector3(), v: new THREE.Vector3(), len: 0.5, w: 1, spin: 0, rot: 0 }));
 let boltCursor = 0;
+// ruzgar cizgileri: karakterin cevresinde halka, onden arkaya akan uzun ince cizgiler
+const windGeo = (() => { const a = new THREE.PlaneGeometry(1, 0.022); const b = a.clone().rotateX(Math.PI / 2); const pa = a.attributes.position.array, pb = b.attributes.position.array; const pos = new Float32Array(pa.length + pb.length); pos.set(pa); pos.set(pb, pa.length); const ia = a.index.array, ib = b.index.array; const idx = new Uint16Array(ia.length + ib.length); idx.set(ia); for (let i = 0; i < ib.length; i++) idx[ia.length + i] = ib[i] + pa.length / 3; const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(new THREE.BufferAttribute(idx, 1)); return g; })();
+const WIND = 260;
+const wind = new THREE.InstancedMesh(windGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.85, depthWrite: false }), WIND); wind.frustumCulled = false; scene.add(wind);
+for (let i = 0; i < WIND; i++) wind.setColorAt(i, sprayCol.set(0xffffff));
+const windData = Array.from({ length: WIND }, () => ({ life: 0, max: 1, p: new THREE.Vector3(), v: new THREE.Vector3(), len: 1.5, w: 1, spin: 0, rot: 0 }));
+let windCursor = 0;
+function emitWind(p, v, len, life, w, color) {
+  const i = windCursor; const d = windData[i]; windCursor = (windCursor + 1) % WIND;
+  d.p.copy(p); d.v.copy(v); d.len = len; d.life = d.max = life; d.w = w; d.spin = 0; d.rot = 0;
+  wind.setColorAt(i, sprayCol.set(color)); wind.instanceColor.needsUpdate = true;
+}
 function emitBolt(p, v, len, life, w, color) {
   const i = boltCursor; const d = boltData[i]; boltCursor = (boltCursor + 1) % BOLTS;
   d.p.copy(p); d.v.copy(v); d.len = len; d.life = d.max = life; d.w = w; d.spin = 0; d.rot = Math.random() * 6.28;
@@ -261,7 +273,7 @@ function emitSpray(p, v, len, life, w, color) {
   d.p.copy(p); d.v.copy(v); d.len = len; d.life = d.max = life; d.w = w; d.spin = (Math.random() - 0.5) * 2; d.rot = Math.random() * 6.28;
   spray.setColorAt(i, sprayCol.set(color)); spray.instanceColor.needsUpdate = true;
 }
-function updateSpray(dt) { updateShardSet(spray, sprayData, SPRAY, dt, 6, 0.90); updateShardSet(bolts, boltData, BOLTS, dt, 2, 0.93); }
+function updateSpray(dt) { updateShardSet(spray, sprayData, SPRAY, dt, 6, 0.90); updateShardSet(bolts, boltData, BOLTS, dt, 2, 0.93); updateShardSet(wind, windData, WIND, dt, 0, 1.0); }
 function updateShardSet(mesh, data, count, dt, grav, drag) {
   for (let i = 0; i < count; i++) {
     const d = data[i];
@@ -485,6 +497,19 @@ function update(dt) {
   const boost = Math.min(1, S.boostT / 0.35) * Math.min(1, S.sprint * 2);
   bubble.visible = boost > 0.02; bubble.position.set(S.pos.x, S.pos.y + 0.85, S.pos.z); bubble.material.uniforms.uT.value = tSec; bubble.material.uniforms.uA.value = boost * 0.9;
   bubble.scale.setScalar(0.85 + 0.15 * boost + Math.sin(tSec * 9) * 0.02 * boost);
+  // rüzgar çizgileri: karakterin çevresinde halka, öne doğmuş çizgiler arkaya akıyor (yukarı değil)
+  if (S.sprint > 0.05 && S.speed > 6) {
+    const px = hz, pz = -hx;                                   // yana
+    const n = 2 + Math.round(3 * S.sprint);
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * 6.28, r = 1.35 + Math.random() * 0.9;
+      const ox = px * Math.cos(a) * r, oz = pz * Math.cos(a) * r, oy = Math.max(0.12, 0.95 + Math.sin(a) * r * 0.75);
+      const ahead = 1.4 + Math.random() * 1.2;
+      const p = new THREE.Vector3(S.pos.x + ox + hx * ahead, S.pos.y + oy, S.pos.z + oz + hz * ahead);
+      const v = new THREE.Vector3(-hx * (S.speed * 1.15 + 7), 0, -hz * (S.speed * 1.15 + 7));
+      emitWind(p, v, 1.0 + Math.random() * 1.2, 0.2 + Math.random() * 0.08, 0.6 + Math.random() * 0.5, Math.random() < 0.75 ? C.white : C.ice);
+    }
+  }
   // koşu tozu: videodaki gibi — ayakların hemen arkasında beliren dikenli beyaz bulut,
   // olduğu yerde kalır, hafif şişip söner; karakter ilerledikçe arkada düz bir çizgi bırakır
   if (S.grounded && S.speed > 5.5) {
@@ -526,7 +551,7 @@ function update(dt) {
   camera.position.add(shakeV);
   camera.lookAt(camT);
   camera.fov = THREE.MathUtils.lerp(camera.fov, 55 + 13 * S.sprint, 6 * dt); camera.updateProjectionMatrix();
-  drawSpeedLines(Math.max(boost, S.sprint * 0.18) * (0.5 + 0.5 * Math.min(1, S.speed / SPRINT)), tSec);
+  drawSpeedLines(0, tSec);
   flashA = Math.max(0, flashA - dt * 2.4); flashEl.style.opacity = flashA;
   // hud
   const st = (id, on) => document.getElementById(id).classList.toggle('on', on);
