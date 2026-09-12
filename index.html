@@ -20,6 +20,9 @@
   .state .pill{min-width:54px;text-align:center}
   .state .pill.on{background:#1d1d1f;color:#fff}
   .power{position:fixed;right:16px;top:52px;pointer-events:none}
+  .charpick{position:fixed;right:16px;top:104px;display:flex;gap:6px}
+  .charpick .pill{text-decoration:none;min-width:54px;text-align:center}
+  .charpick .pill.on{background:#1d1d1f;color:#fff}
   .bar{height:4px;width:120px;background:rgba(0,0,0,0.1);border-radius:2px;overflow:hidden;margin-top:6px}
   .bar i{display:block;height:100%;width:100%;background:#3aa8ff;border-radius:2px;transform-origin:left;transition:transform .08s linear}
   /* touch controls */
@@ -39,7 +42,7 @@
 <div id="flash"></div>
 
 <div class="hud">
-  <div class="t">67 Hero — Move Test</div>
+  <div class="t" id="ttl">67 Hero — Move Test</div>
   <div class="s">Empty map · movement and effects only</div>
 </div>
 <div class="state">
@@ -49,6 +52,7 @@
   <div class="pill" id="stAir">air</div>
 </div>
 <div class="power"><div class="pill">Power<div class="bar"><i id="pw"></i></div></div></div>
+<div class="charpick"><a class="pill" data-c="hero" href="?c=hero">Hero</a><a class="pill" data-c="goril" href="?c=goril">Gorilla</a></div>
 
 <div class="keys">
   <div class="pill"><b>W A S D</b> move · <b>drag</b> look · <b>wheel</b> zoom</div>
@@ -360,13 +364,23 @@ function drawSpeedLines(strength, tSec) {
   }
 }
 
+// ---------- character table ----------
+const CHARS = {
+  hero:  { url: './hero.glb',  height: 1.5, yaw: 0, label: 'Hero' },
+  goril: { url: './goril.glb', height: 1.75, yaw: 0, label: 'Gorilla' },
+};
+const charKey = (new URLSearchParams(location.search).get('c') || 'hero') in CHARS ? (new URLSearchParams(location.search).get('c') || 'hero') : 'hero';
+const CHAR = CHARS[charKey];
+document.querySelectorAll('.charpick .pill').forEach(el => { el.classList.toggle('on', el.dataset.c === charKey); });
+document.title = '67 ' + CHAR.label + ' — Move Test'; document.getElementById('ttl').textContent = '67 ' + CHAR.label + ' — Move Test';
+
 // ---------- hero ----------
 const hero = new THREE.Group(); scene.add(hero);
 let mixer, clips = {}, current = null, model, heroScale = 1;
 const loader = new GLTFLoader();
-loader.load('./hero.glb', (g) => {
+loader.load(CHAR.url, (g) => {
   model = g.scene; model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; if (o.material) o.material.side = THREE.FrontSide; } });
-  const box = new THREE.Box3().setFromObject(model); const h = box.max.y - box.min.y; const s = 1.5 / h; model.scale.setScalar(s); heroScale = s;
+  const box = new THREE.Box3().setFromObject(model); const h = box.max.y - box.min.y; const s = CHAR.height / h; model.scale.setScalar(s); heroScale = s; model.rotation.y = CHAR.yaw;
   box.setFromObject(model); model.position.y -= box.min.y; model.position.x -= (box.min.x + box.max.x) / 2; model.position.z -= (box.min.z + box.max.z) / 2;
   hero.add(model);
   mixer = new THREE.AnimationMixer(model);
@@ -375,7 +389,7 @@ loader.load('./hero.glb', (g) => {
   play('idle', 0);
   document.getElementById('load').style.opacity = 0; setTimeout(() => document.getElementById('load').remove(), 450);
   respawn();
-}, undefined, (e) => { document.getElementById('load').textContent = 'Could not load hero.glb'; console.error(e); });
+}, undefined, (e) => { document.getElementById('load').textContent = 'Could not load ' + CHAR.url; console.error(e); });
 
 function play(name, fade = 0.18, timeScale = 1) {
   const a = clips[name]; if (!a) return;
@@ -513,8 +527,8 @@ function update(dt) {
   if (sprintOn && !S.wasSprint) S.boostT = 1.25;   // sprint basladi -> kisa boost: balon + ekran hiz cizgileri (videodaki GO ani)
   S.wasSprint = sprintOn; S.boostT = Math.max(0, S.boostT - dt);
   const boost = Math.min(1, S.boostT / 0.35) * Math.min(1, S.sprint * 2);
-  bubble.visible = boost > 0.02; bubble.position.set(S.pos.x, S.pos.y + 0.85, S.pos.z); bubble.material.uniforms.uT.value = tSec; bubble.material.uniforms.uA.value = boost * 0.9;
-  bubble.scale.setScalar(0.85 + 0.15 * boost + Math.sin(tSec * 9) * 0.02 * boost);
+  bubble.visible = boost > 0.02; bubble.position.set(S.pos.x, S.pos.y + 0.57 * CHAR.height, S.pos.z); bubble.material.uniforms.uT.value = tSec; bubble.material.uniforms.uA.value = boost * 0.9;
+  bubble.scale.setScalar((0.85 + 0.15 * boost + Math.sin(tSec * 9) * 0.02 * boost) * (CHAR.height / 1.5));
   // rüzgar yayları: önden doğup iki yandan arkaya süpürür (karakterin üstünden geçmez)
   if (S.sprint > 0.05 && S.speed > 6) {
     const n = Math.random() < 0.35 + 0.35 * S.sprint ? 1 : 0;
