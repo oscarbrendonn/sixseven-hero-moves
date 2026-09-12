@@ -226,24 +226,31 @@ function updateShards(dt) {
   shards.instanceMatrix.needsUpdate = true;
 }
 
-// ---------- wind streaks (long thin lines blown backward while sprinting) ----------
-const STREAKS = 220;
-const streakGeo = (() => { const a = new THREE.PlaneGeometry(1, 0.045); const b = a.clone().rotateX(Math.PI / 2); const g = new THREE.BufferGeometry(); const pa = a.attributes.position.array, pb = b.attributes.position.array; const pos = new Float32Array(pa.length + pb.length); pos.set(pa); pos.set(pb, pa.length); const ia = a.index.array, ib = b.index.array; const idx = new Uint16Array(ia.length + ib.length); idx.set(ia); for (let i = 0; i < ib.length; i++) idx[ia.length + i] = ib[i] + pa.length / 3; g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(new THREE.BufferAttribute(idx, 1)); return g; })();
-const streakMat = new THREE.MeshBasicMaterial({ color: 0xdff6ff, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
-const streaks = new THREE.InstancedMesh(streakGeo, streakMat, STREAKS); streaks.frustumCulled = false; scene.add(streaks);
-const streakData = Array.from({ length: STREAKS }, () => ({ life: 0, max: 1, p: new THREE.Vector3(), v: new THREE.Vector3(), len: 1, w: 1 }));
-let streakCursor = 0; const _dir = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _mq = new THREE.Matrix4();
-function emitStreak(p, v, len, life, w = 1) { const d = streakData[streakCursor]; streakCursor = (streakCursor + 1) % STREAKS; d.p.copy(p); d.v.copy(v); d.len = len; d.life = d.max = life; d.w = w; }
-function updateStreaks(dt) {
-  for (let i = 0; i < STREAKS; i++) {
-    const d = streakData[i];
-    if (d.life <= 0) { _m.makeScale(0, 0, 0); streaks.setMatrixAt(i, _m); continue; }
-    d.life -= dt; d.v.multiplyScalar(0.985); d.p.addScaledVector(d.v, dt);
-    const k = Math.max(0, d.life / d.max); _dir.copy(d.v).normalize();
-    _mq.lookAt(new THREE.Vector3(), _dir, _up); _q.setFromRotationMatrix(_mq); _e.set(0, Math.PI / 2, 0); _q.multiply(new THREE.Quaternion().setFromEuler(_e));
-    _s.set(d.len * (0.5 + 0.5 * k), d.w * k, d.w * k); _m.compose(d.p, _q, _s); streaks.setMatrixAt(i, _m);
+// ---------- sprint spray: dense white/cyan crystal shards blown back along the ground ----------
+const SPRAY = 900;
+const sprayGeo = (() => { const g = new THREE.BufferGeometry(); const v = new Float32Array([ -0.5,0,0,  0.15,0.06,0,  0.5,0,0,  0.15,-0.06,0,  -0.5,0,0, 0.15,0,0.06, 0.5,0,0, 0.15,0,-0.06 ]); g.setAttribute('position', new THREE.BufferAttribute(v, 3)); g.setIndex([0,1,2, 0,2,3, 4,5,6, 4,6,7]); return g; })();
+const sprayMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.96, depthWrite: false });
+const spray = new THREE.InstancedMesh(sprayGeo, sprayMat, SPRAY); spray.frustumCulled = false; scene.add(spray);
+const sprayCol = new THREE.Color();
+for (let i = 0; i < SPRAY; i++) spray.setColorAt(i, sprayCol.set(0xffffff));
+const sprayData = Array.from({ length: SPRAY }, () => ({ life: 0, max: 1, p: new THREE.Vector3(), v: new THREE.Vector3(), len: 0.3, w: 1, spin: 0, rot: 0 }));
+let sprayCursor = 0; const _dir = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _mq = new THREE.Matrix4(), _q2 = new THREE.Quaternion();
+function emitSpray(p, v, len, life, w, color) {
+  const i = sprayCursor; const d = sprayData[i]; sprayCursor = (sprayCursor + 1) % SPRAY;
+  d.p.copy(p); d.v.copy(v); d.len = len; d.life = d.max = life; d.w = w; d.spin = (Math.random() - 0.5) * 14; d.rot = Math.random() * 6.28;
+  spray.setColorAt(i, sprayCol.set(color)); spray.instanceColor.needsUpdate = true;
+}
+function updateSpray(dt) {
+  for (let i = 0; i < SPRAY; i++) {
+    const d = sprayData[i];
+    if (d.life <= 0) { _m.makeScale(0, 0, 0); spray.setMatrixAt(i, _m); continue; }
+    d.life -= dt; d.v.y -= 15 * dt; d.v.multiplyScalar(0.965); d.p.addScaledVector(d.v, dt); d.rot += d.spin * dt;
+    const g = groundAt(d.p.x, d.p.z) + 0.03; if (d.p.y < g) { d.p.y = g; d.v.y = Math.abs(d.v.y) * 0.25; d.v.x *= 0.7; d.v.z *= 0.7; }
+    const k = Math.max(0, d.life / d.max); _dir.copy(d.v); if (_dir.lengthSq() < 1e-4) _dir.set(1, 0, 0); _dir.normalize();
+    _mq.lookAt(new THREE.Vector3(), _dir, _up); _q.setFromRotationMatrix(_mq); _e.set(0, Math.PI / 2, 0); _q.multiply(_q2.setFromEuler(_e)); _e.set(d.rot, 0, 0); _q.multiply(_q2.setFromEuler(_e));
+    const sc = k < 0.3 ? k / 0.3 : 1; _s.set(d.len * (0.6 + 0.4 * sc), d.w * sc, d.w * sc); _m.compose(d.p, _q, _s); spray.setMatrixAt(i, _m);
   }
-  streaks.instanceMatrix.needsUpdate = true;
+  spray.instanceMatrix.needsUpdate = true;
 }
 
 // ---------- rings (shockwaves) ----------
@@ -349,7 +356,7 @@ document.getElementById('bPower').addEventListener('pointerdown', e => { e.preve
 const bS = document.getElementById('bSprint'); bS.addEventListener('pointerdown', e => { e.preventDefault(); touchSprint = !touchSprint; bS.classList.toggle('hold', touchSprint); });
 
 // ---------- character state ----------
-const S = { pos: new THREE.Vector3(0, 0, 0), vel: new THREE.Vector3(), speed: 0, grounded: true, hover: false, hoverT: 0, jumpsLeft: 1, sprint: 0, landT: 0, powerT: 0, powerCd: 0, dustT: 0, trailT: 0, fallPeak: 0, lockT: 0, heading: 0, squash: 0, stretch: 0 };
+const S = { pos: new THREE.Vector3(0, 0, 0), vel: new THREE.Vector3(), speed: 0, grounded: true, hover: false, hoverT: 0, jumpsLeft: 1, sprint: 0, landT: 0, powerT: 0, powerCd: 0, dustT: 0, trailT: 0, fallPeak: 0, lockT: 0, heading: 0, squash: 0, stretch: 0, boostT: 0, wasSprint: false };
 const WALK = 3.4, RUN = 6.8, SPRINT = 12.5, JUMP_V = 9.2, GRAV = 24, HOVER_MAX = 1.5;
 let shake = 0; const shakeV = new THREE.Vector3();
 const tmpV = new THREE.Vector3(), fwd = new THREE.Vector3(), right = new THREE.Vector3();
@@ -445,19 +452,33 @@ function update(dt) {
   if (mixer) mixer.update(dt);
   S.squash = Math.max(0, S.squash - dt * 5.5); S.stretch = Math.max(0, S.stretch - dt * 6);
   if (model) { const q = S.squash * 0.28, st = S.stretch * 0.14; model.scale.set(heroScale * (1 + q * 0.5 - st * 0.35), heroScale * (1 - q + st), heroScale * (1 + q * 0.5 - st * 0.35)); }
-  updateStreaks(dt);
+  updateSpray(dt);
   // effects: sprint bubble + trail + fov
-  bubble.visible = S.sprint > 0.02; bubble.position.set(S.pos.x, S.pos.y + 0.85, S.pos.z); bubble.material.uniforms.uT.value = tSec; bubble.material.uniforms.uA.value = S.sprint * 0.9;
-  bubble.scale.setScalar(0.85 + 0.15 * S.sprint + Math.sin(tSec * 9) * 0.02 * S.sprint);
+  const sprintOn = S.sprint >= 0.5;
+  if (sprintOn && !S.wasSprint) S.boostT = 1.25;   // sprint basladi -> kisa boost: balon + ekran hiz cizgileri (videodaki GO ani)
+  S.wasSprint = sprintOn; S.boostT = Math.max(0, S.boostT - dt);
+  const boost = Math.min(1, S.boostT / 0.35) * Math.min(1, S.sprint * 2);
+  bubble.visible = boost > 0.02; bubble.position.set(S.pos.x, S.pos.y + 0.85, S.pos.z); bubble.material.uniforms.uT.value = tSec; bubble.material.uniforms.uA.value = boost * 0.9;
+  bubble.scale.setScalar(0.85 + 0.15 * boost + Math.sin(tSec * 9) * 0.02 * boost);
   if (S.sprint > 0.05 && S.grounded) {
     S.trailT -= dt;
     if (S.trailT <= 0) {
-      S.trailT = 0.02;
-      const back = -(S.speed * 0.85 + 3);
-      // low wake: soft puffs blown straight back along the ground
-      for (let i = 0; i < 2; i++) trail.emit(new THREE.Vector3(S.pos.x - hx * 0.5 + (Math.random() - 0.5) * 0.6, S.pos.y + 0.08 + Math.random() * 0.3, S.pos.z - hz * 0.5 + (Math.random() - 0.5) * 0.6), new THREE.Vector3(hx * back + (Math.random() - 0.5) * 1.5, 0.1 + Math.random() * 0.25, hz * back + (Math.random() - 0.5) * 1.5), 0.42, 0.8 + Math.random() * 0.8, Math.random() < 0.6 ? 0xffffff : 0xa8f0ff);
-      // wind streaks: long lines racing backward past the body
-      for (let i = 0; i < 2; i++) { const a = Math.random() * 6.28, r = 0.35 + Math.random() * 0.75; emitStreak(new THREE.Vector3(S.pos.x + Math.cos(a) * r - hx * 0.2, S.pos.y + 0.15 + Math.random() * 1.5, S.pos.z + Math.sin(a) * r - hz * 0.2), new THREE.Vector3(hx * back * 1.6, -0.2 - Math.random() * 0.4, hz * back * 1.6), 0.8 + Math.random() * 1.4 + S.speed * 0.06, 0.28 + Math.random() * 0.14, 0.7 + Math.random() * 0.8); }
+      S.trailT = 0.016;
+      const back = -(S.speed * 0.75 + 2.5), px = -hz, pz = hx;   // px,pz = yana dogru
+      const base = new THREE.Vector3(S.pos.x - hx * 0.35, S.pos.y + 0.05, S.pos.z - hz * 0.35);
+      // kristal sprey: geriye + yanlara yelpaze, yerden hafif yukari, dusup sekiyor
+      const n = 9 + Math.round(11 * S.sprint);
+      for (let i = 0; i < n; i++) {
+        const side = (Math.random() - 0.5) * 2, spread = side * (0.5 + Math.random() * 3.0), up = 0.5 + Math.random() * Math.random() * 4.2;
+        const p = base.clone().add(new THREE.Vector3(px * side * 0.35 + (Math.random() - 0.5) * 0.3, Math.random() * 0.25, pz * side * 0.35 + (Math.random() - 0.5) * 0.3));
+        const v = new THREE.Vector3(hx * back * (0.55 + Math.random() * 0.7) + px * spread, up, hz * back * (0.55 + Math.random() * 0.7) + pz * spread);
+        const r = Math.random(); const col = r < 0.55 ? 0xffffff : (r < 0.85 ? 0xbff4ff : 0x7fe3ff);
+        emitSpray(p, v, 0.13 + Math.random() * 0.32, 0.32 + Math.random() * 0.38, 0.55 + Math.random() * 0.7, col);
+      }
+      // cam gobegi sis: alcak, yumusak, geriye yayilan
+      for (let i = 0; i < 3; i++) trail.emit(base.clone().add(new THREE.Vector3(px * (Math.random() - 0.5) * 1.2, 0.05 + Math.random() * 0.25, pz * (Math.random() - 0.5) * 1.2)), new THREE.Vector3(hx * back * 0.5 + px * (Math.random() - 0.5) * 3, 0.3 + Math.random() * 0.5, hz * back * 0.5 + pz * (Math.random() - 0.5) * 3), 0.45, 1.4 + Math.random() * 1.2, Math.random() < 0.5 ? 0xaeefff : 0xffffff);
+      // ara sira yildiz kivilcimi
+      if (Math.random() < 0.35) sparks.emit(base.clone().add(new THREE.Vector3(px * (Math.random() - 0.5) * 1.5, 0.2 + Math.random() * 0.8, pz * (Math.random() - 0.5) * 1.5)), new THREE.Vector3(hx * back * 0.4 + (Math.random() - 0.5) * 2, 2 + Math.random() * 2, hz * back * 0.4 + (Math.random() - 0.5) * 2), 0.5, 1.4, 0xffffff);
     }
   }
   if (S.grounded && S.speed > 2.5) { S.dustT -= dt; if (S.dustT <= 0) { S.dustT = S.sprint > 0.5 ? 0.06 : 0.16; dust.emit(new THREE.Vector3(S.pos.x - hx * 0.3 + (Math.random() - 0.5) * 0.35, S.pos.y + 0.05, S.pos.z - hz * 0.3 + (Math.random() - 0.5) * 0.35), new THREE.Vector3(-hx * (2.2 + S.sprint * 4) + (Math.random() - 0.5), 0.35 + Math.random() * 0.3, -hz * (2.2 + S.sprint * 4) + (Math.random() - 0.5)), 0.5, 0.6 + S.sprint * 0.6); } }
@@ -479,7 +500,7 @@ function update(dt) {
   camera.position.add(shakeV);
   camera.lookAt(camT);
   camera.fov = THREE.MathUtils.lerp(camera.fov, 55 + 13 * S.sprint, 6 * dt); camera.updateProjectionMatrix();
-  drawSpeedLines(S.sprint * (0.5 + 0.5 * Math.min(1, S.speed / SPRINT)), tSec);
+  drawSpeedLines(Math.max(boost, S.sprint * 0.18) * (0.5 + 0.5 * Math.min(1, S.speed / SPRINT)), tSec);
   flashA = Math.max(0, flashA - dt * 2.4); flashEl.style.opacity = flashA;
   // hud
   const st = (id, on) => document.getElementById(id).classList.toggle('on', on);
@@ -488,7 +509,7 @@ function update(dt) {
 }
 let __tU = 0, __tR = 0, __n = 0;
 renderer.setAnimationLoop(() => { const a = performance.now(); update(clock.getDelta()); const b = performance.now(); renderer.render(scene, camera); const c = performance.now(); __tU += b - a; __tR += c - b; __n++; });
-window.__dbg = { S, renderer, scene, camera, update, keys, updateStreaks, updateShards, updateRings, pools: { dust, sparks, glow, trail }, stats: () => ({ frames: __n, updateMs: +(__tU / Math.max(1, __n)).toFixed(2), renderMs: +(__tR / Math.max(1, __n)).toFixed(2), calls: renderer.info.render.calls, tris: renderer.info.render.triangles }) };
+window.__dbg = { S, renderer, scene, camera, update, keys, updateSpray, updateShards, updateRings, pools: { dust, sparks, glow, trail }, stats: () => ({ frames: __n, updateMs: +(__tU / Math.max(1, __n)).toFixed(2), renderMs: +(__tR / Math.max(1, __n)).toFixed(2), calls: renderer.info.render.calls, tris: renderer.info.render.triangles }) };
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); resizeLines(); for (const p of [dust, sparks, glow, trail]) p.mat.uniforms.uScale.value = innerHeight * 0.5; });
 </script>
 </body>
