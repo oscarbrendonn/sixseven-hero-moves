@@ -254,36 +254,19 @@ const bolts = new THREE.InstancedMesh(boltGeo, new THREE.MeshBasicMaterial({ col
 for (let i = 0; i < BOLTS; i++) bolts.setColorAt(i, sprayCol.set(0xffffff));
 const boltData = Array.from({ length: BOLTS }, () => ({ life: 0, max: 1, p: new THREE.Vector3(), v: new THREE.Vector3(), len: 0.5, w: 1, spin: 0, rot: 0 }));
 let boltCursor = 0;
-// rüzgar yayları: karakteri saran halkada, önden iki yana ayrılıp arkaya doğru dönen kavisli şeritler
-const ARC_LEN = 1.25;   // radyan (~72 derece)
-const windGeo = (() => { const seg = 16, pos = [], idx = []; const h = 0.028;
-  for (let i = 0; i <= seg; i++) { const u = (i / seg) * ARC_LEN; const x = Math.sin(u), z = Math.cos(u); pos.push(x, h, z, x, -h, z); }   // dikey ince serit
-  for (let i = 0; i < seg; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
-  const base = pos.length / 3;
-  for (let i = 0; i <= seg; i++) { const u = (i / seg) * ARC_LEN; const r0 = 1 - h, r1 = 1 + h; pos.push(Math.sin(u) * r0, 0, Math.cos(u) * r0, Math.sin(u) * r1, 0, Math.cos(u) * r1); }  // yatay ince serit
-  for (let i = 0; i < seg; i++) { const a = base + i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
-  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3)); g.setIndex(idx); return g; })();
-const WIND = 200;
-const wind = new THREE.InstancedMesh(windGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.9, depthWrite: false }), WIND); wind.frustumCulled = false; scene.add(wind);
+// hız çizgileri: karakteri saran halka üzerinde, hareket yönüne paralel, arkaya uzanan düz çizgiler
+const windGeo = (() => { const a = new THREE.PlaneGeometry(1, 0.024); const b = a.clone().rotateX(Math.PI / 2); const pa = a.attributes.position.array, pb = b.attributes.position.array; const pos = new Float32Array(pa.length + pb.length); pos.set(pa); pos.set(pb, pa.length); const ia = a.index.array, ib = b.index.array; const idx = new Uint16Array(ia.length + ib.length); idx.set(ia); for (let i = 0; i < ib.length; i++) idx[ia.length + i] = ib[i] + pa.length / 3; const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(new THREE.BufferAttribute(idx, 1)); return g; })();
+const WIND = 240;
+const wind = new THREE.InstancedMesh(windGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.85, depthWrite: false }), WIND); wind.frustumCulled = false; scene.add(wind);
 for (let i = 0; i < WIND; i++) wind.setColorAt(i, sprayCol.set(0xffffff));
-const windData = Array.from({ length: WIND }, () => ({ life: 0, max: 1, phi: 0, omega: 0, r: 1.5, h: 1, w: 1 }));
+const windData = Array.from({ length: WIND }, () => ({ life: 0, max: 1, p: new THREE.Vector3(), v: new THREE.Vector3(), len: 1.5, w: 1, spin: 0, rot: 0 }));
 let windCursor = 0;
-function emitWindArc(phi, omega, r, h, life, w, color) {
+function emitWind(p, v, len, life, w, color) {
   const i = windCursor; const d = windData[i]; windCursor = (windCursor + 1) % WIND;
-  d.phi = phi; d.omega = omega; d.r = r; d.h = h; d.life = d.max = life; d.w = w;
+  d.p.copy(p); d.v.copy(v); d.len = len; d.life = d.max = life; d.w = w; d.spin = 0; d.rot = 0;
   wind.setColorAt(i, sprayCol.set(color)); wind.instanceColor.needsUpdate = true;
 }
-function updateWind(dt) {
-  for (let i = 0; i < WIND; i++) {
-    const d = windData[i];
-    if (d.life <= 0) { _m.makeScale(0, 0, 0); wind.setMatrixAt(i, _m); continue; }
-    d.life -= dt; d.phi += d.omega * dt;
-    const k = Math.max(0, d.life / d.max); const f = k < 0.35 ? k / 0.35 : (k > 0.8 ? (1 - k) / 0.2 : 1);
-    _e.set(0, S.heading + d.phi, 0); _q.setFromEuler(_e);
-    _s.set(d.r, d.w * (0.4 + 0.6 * f), d.r); _m.compose(new THREE.Vector3(S.pos.x, S.pos.y + d.h, S.pos.z), _q, _s); wind.setMatrixAt(i, _m);
-  }
-  wind.instanceMatrix.needsUpdate = true;
-}
+function updateWind(dt) { updateShardSet(wind, windData, WIND, dt, 0, 1.0); }
 function emitBolt(p, v, len, life, w, color) {
   if (NORMAL) return;
   const i = boltCursor; const d = boltData[i]; boltCursor = (boltCursor + 1) % BOLTS;
@@ -566,14 +549,19 @@ function update(dt) {
   const boost = Math.min(1, S.boostT / 0.35) * Math.min(1, S.sprint * 2);
   bubble.visible = !NORMAL && boost > 0.02; bubble.position.set(S.pos.x, S.pos.y + 0.57 * CHAR.height, S.pos.z); bubble.material.uniforms.uT.value = tSec; bubble.material.uniforms.uA.value = boost * 0.9;
   bubble.scale.setScalar((0.85 + 0.15 * boost + Math.sin(tSec * 9) * 0.02 * boost) * (CHAR.height / 1.5));
-  // rüzgar yayları: önden doğup iki yandan arkaya süpürür (karakterin üstünden geçmez)
+  // hız çizgileri: halka üzerinde doğar, karakterin hizasından arkaya uzanır, geriye akıp söner
   if (S.sprint > 0.05 && S.speed > 6) {
-    const n = Math.random() < 0.35 + 0.35 * S.sprint ? 1 : 0;
+    const px = hz, pz = -hx;                                      // yana (sağ)
+    const n = 2 + Math.round(2 * S.sprint);
     for (let i = 0; i < n; i++) {
-      const side = Math.random() < 0.5 ? 1 : -1;
-      const phi0 = side * (0.15 + Math.random() * 0.5) - (side > 0 ? 0 : ARC_LEN);   // yayin on ucu one yakin
-      const omega = side * (4.5 + Math.random() * 3.5 + S.speed * 0.15);
-      emitWindArc(phi0, omega, 1.4 + Math.random() * 0.8, 0.15 + Math.random() * 1.8, 0.34 + Math.random() * 0.1, 0.8 + Math.random() * 0.7, Math.random() < 0.7 ? C.white : C.ice);
+      const a = Math.random() * 6.28, r = 1.25 + Math.random() * 0.7;
+      const ox = px * Math.cos(a) * r, oz = pz * Math.cos(a) * r;
+      const oy = Math.max(0.1, 0.85 + Math.sin(a) * r * 0.85);
+      const len = 1.2 + Math.random() * 1.6;
+      const back = 0.2 + len * 0.5;                               // çizgi karakterin hizasından başlayıp arkaya uzanır
+      const p = new THREE.Vector3(S.pos.x + ox - hx * back, S.pos.y + oy, S.pos.z + oz - hz * back);
+      const v = new THREE.Vector3(-hx * (S.speed * 0.9 + 4), 0, -hz * (S.speed * 0.9 + 4));
+      emitWind(p, v, len, 0.22 + Math.random() * 0.1, 0.7 + Math.random() * 0.6, Math.random() < 0.8 ? C.white : C.ice);
     }
   }
   if (S.grounded && S.speed > 0.8 && S.speed <= 5.5) { S.stepT = (S.stepT || 0) - dt; if (S.stepT <= 0) { S.stepT = 0.42; printSide = -printSide; emitPrint(S.pos.x + hz * 0.13 * printSide, S.pos.z - hx * 0.13 * printSide, groundAt(S.pos.x, S.pos.z), S.heading); } }
