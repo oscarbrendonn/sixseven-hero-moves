@@ -58,6 +58,7 @@
   <div class="pill"><b>W A S D</b> move · <b>drag</b> look · <b>wheel</b> zoom</div>
   <div class="pill"><b>Shift</b> sprint · <b>Space</b> jump · <b>Space in air</b> hover</div>
   <div class="pill"><b>E</b> power burst · <b>R</b> respawn</div>
+  <div class="pill"><b>Gamepad</b> L-stick move · R-stick look · <b>A</b> jump · <b>L3</b> sprint · <b>X</b> power</div>
 </div>
 
 <div id="stick"><div id="knob"></div></div>
@@ -417,6 +418,24 @@ addEventListener('pointermove', e => { if (e.pointerId === stickId) moveStick(e)
 addEventListener('pointerup', e => { if (e.pointerId === stickId) { stickId = null; stickVec = { x: 0, y: 0 }; knob.style.left = '39px'; knob.style.top = '39px'; } });
 function moveStick(e) { const r = stick.getBoundingClientRect(); let dx = e.clientX - (r.left + 64), dy = e.clientY - (r.top + 64); const l = Math.hypot(dx, dy) || 1, m = Math.min(l, 44); dx = dx / l * m; dy = dy / l * m; knob.style.left = (39 + dx) + 'px'; knob.style.top = (39 + dy) + 'px'; stickVec = { x: dx / 44, y: dy / 44 }; }
 let touchSprint = false;
+// ---------- gamepad (Blankos düzeni): sol çubuk hareket, sağ çubuk kamera, A zıpla, L3 sprint aç/kapa, X güç ----------
+const pad = { x: 0, y: 0, sprint: false, prev: {} };
+function pollPad(dt) {
+  const gps = navigator.getGamepads ? navigator.getGamepads() : []; let gp = null;
+  for (const g of gps) if (g && g.connected) { gp = g; break; }
+  if (!gp) { pad.x = 0; pad.y = 0; return; }
+  const dz = (v) => Math.abs(v) < 0.14 ? 0 : v;
+  pad.x = dz(gp.axes[0] || 0); pad.y = dz(gp.axes[1] || 0);
+  const rx = dz(gp.axes[2] || 0), ry = dz(gp.axes[3] || 0);
+  yaw -= rx * 2.6 * dt; pitch = THREE.MathUtils.clamp(pitch + ry * 1.8 * dt, -0.2, 1.1);
+  const down = (i) => !!(gp.buttons[i] && gp.buttons[i].pressed);
+  const edge = (i) => { const d = down(i), was = !!pad.prev[i]; pad.prev[i] = d; return d && !was; };
+  if (edge(0)) jumpPressed();                       // A
+  if (edge(2) || edge(1)) powerPressed();           // X / B
+  if (edge(10)) pad.sprint = !pad.sprint;           // L3: sprint toggle (Blankos)
+  if (down(7) || down(5)) pad.sprint = true;        // RT / RB basılıyken de sprint
+  if (edge(9)) respawn();                           // Start
+}
 document.getElementById('bJump').addEventListener('pointerdown', e => { e.preventDefault(); jumpPressed(); });
 document.getElementById('bPower').addEventListener('pointerdown', e => { e.preventDefault(); powerPressed(); });
 const bS = document.getElementById('bSprint'); bS.addEventListener('pointerdown', e => { e.preventDefault(); touchSprint = !touchSprint; bS.classList.toggle('hold', touchSprint); });
@@ -472,10 +491,11 @@ function flash(a) { flashA = a; }
 const clock = new THREE.Clock(); let tSec = 0;
 function update(dt) {
   tSec += dt; dt = Math.min(dt, 0.05);
-  const wantSprint = !!keys['ShiftLeft'] || !!keys['ShiftRight'] || touchSprint;
+  pollPad(dt);
+  const wantSprint = !!keys['ShiftLeft'] || !!keys['ShiftRight'] || touchSprint || pad.sprint;
   // move input relative to camera
-  let ix = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0) + stickVec.x;
-  let iz = (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0) - (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0) + stickVec.y;
+  let ix = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0) + stickVec.x + pad.x;
+  let iz = (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0) - (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0) + stickVec.y + pad.y;
   const il = Math.hypot(ix, iz); if (il > 1) { ix /= il; iz /= il; }
   const moving = il > 0.08 && S.lockT <= 0;
   fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw)); right.set(fwd.z, 0, -fwd.x);
@@ -526,6 +546,7 @@ function update(dt) {
   const sprintOn = S.sprint >= 0.5;
   if (sprintOn && !S.wasSprint) S.boostT = 1.25;   // sprint basladi -> kisa boost: balon + ekran hiz cizgileri (videodaki GO ani)
   S.wasSprint = sprintOn; S.boostT = Math.max(0, S.boostT - dt);
+  if (!moving && pad.sprint) pad.sprint = false;
   const boost = Math.min(1, S.boostT / 0.35) * Math.min(1, S.sprint * 2);
   bubble.visible = boost > 0.02; bubble.position.set(S.pos.x, S.pos.y + 0.57 * CHAR.height, S.pos.z); bubble.material.uniforms.uT.value = tSec; bubble.material.uniforms.uA.value = boost * 0.9;
   bubble.scale.setScalar((0.85 + 0.15 * boost + Math.sin(tSec * 9) * 0.02 * boost) * (CHAR.height / 1.5));
