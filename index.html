@@ -57,8 +57,8 @@
 <div class="keys">
   <div class="pill"><b>W A S D</b> move · <b>drag</b> look · <b>wheel</b> zoom</div>
   <div class="pill"><b>Shift</b> sprint · <b>Space</b> jump · <b>Space in air</b> hover</div>
-  <div class="pill"><b>E</b> power burst · <b>R</b> respawn</div>
-  <div class="pill"><b>Gamepad</b> L-stick move · R-stick look · <b>A</b> jump · <b>L3</b> sprint · <b>X</b> power</div>
+  <div class="pill" id="hintPower"><b>E</b> power burst · <b>R</b> respawn</div>
+  <div class="pill" id="hintPad"><b>Gamepad</b> L-stick move · R-stick look · <b>A</b> jump · <b>L3</b> sprint · <b>X</b> power</div>
 </div>
 
 <div id="stick"><div id="knob"></div></div>
@@ -138,7 +138,8 @@ function groundAt(x, z) {
 }
 
 // ---------- lightning palette ----------
-const C = { white: 0xffffff, elec: 0x6fe0ff, blue: 0x3a9dff, violet: 0xa27bff, ice: 0xd9f7ff };
+const NORMAL = true;   // sade sürüm: güç yok, şimşek yok; sadece rüzgar + ayak izi
+const C = NORMAL ? { white: 0xffffff, elec: 0xf2f5f8, blue: 0xe4e9ef, violet: 0xffffff, ice: 0xf7fbff } : { white: 0xffffff, elec: 0x6fe0ff, blue: 0x3a9dff, violet: 0xa27bff, ice: 0xd9f7ff };
 const pick = (...cs) => cs[Math.floor(Math.random() * cs.length)];
 const boltCol = () => { const r = Math.random(); return r < 0.55 ? C.elec : r < 0.9 ? C.white : C.blue; };
 
@@ -284,6 +285,7 @@ function updateWind(dt) {
   wind.instanceMatrix.needsUpdate = true;
 }
 function emitBolt(p, v, len, life, w, color) {
+  if (NORMAL) return;
   const i = boltCursor; const d = boltData[i]; boltCursor = (boltCursor + 1) % BOLTS;
   d.p.copy(p); d.v.copy(v); d.len = len; d.life = d.max = life; d.w = w; d.spin = 0; d.rot = Math.random() * 6.28;
   bolts.setColorAt(i, sprayCol.set(color)); bolts.instanceColor.needsUpdate = true;
@@ -308,6 +310,18 @@ function updateShardSet(mesh, data, count, dt, grav, drag) {
     const sc = k < 0.3 ? k / 0.3 : 1; _s.set(d.len * (0.6 + 0.4 * sc), d.w * sc, d.w * sc); _m.compose(d.p, _q, _s); mesh.setMatrixAt(i, _m);
   }
   mesh.instanceMatrix.needsUpdate = true;
+}
+
+// ---------- ayak izleri: her adımda yere düşen, yavaşça sönen hafif iz ----------
+const PRINTS = 40;
+const printGeo = new THREE.CircleGeometry(1, 20); printGeo.rotateX(-Math.PI / 2);
+const prints = new THREE.InstancedMesh(printGeo, new THREE.MeshBasicMaterial({ color: 0x5c6470, transparent: true, opacity: 0.16, depthWrite: false }), PRINTS); prints.frustumCulled = false; scene.add(prints);
+const printData = Array.from({ length: PRINTS }, () => ({ life: 0, max: 1, p: new THREE.Vector3(), rot: 0 }));
+let printCursor = 0, printSide = 1;
+function emitPrint(x, z, y, rot) { const d = printData[printCursor]; printCursor = (printCursor + 1) % PRINTS; d.p.set(x, y + 0.012, z); d.rot = rot; d.life = d.max = 1.6; }
+function updatePrints(dt) {
+  for (let i = 0; i < PRINTS; i++) { const d = printData[i]; if (d.life <= 0) { _m.makeScale(0, 0, 0); prints.setMatrixAt(i, _m); continue; } d.life -= dt; const k = Math.max(0, d.life / d.max); _e.set(0, d.rot, 0); _q.setFromEuler(_e); _s.set(0.13 * Math.min(1, k * 3), 1, 0.22 * Math.min(1, k * 3)); _m.compose(d.p, _q, _s); prints.setMatrixAt(i, _m); }
+  prints.instanceMatrix.needsUpdate = true;
 }
 
 // ---------- rings (shockwaves) ----------
@@ -373,7 +387,8 @@ const CHARS = {
 const charKey = (new URLSearchParams(location.search).get('c') || 'hero') in CHARS ? (new URLSearchParams(location.search).get('c') || 'hero') : 'hero';
 const CHAR = CHARS[charKey];
 document.querySelectorAll('.charpick .pill').forEach(el => { el.classList.toggle('on', el.dataset.c === charKey); });
-document.title = '67 ' + CHAR.label + ' — Move Test'; document.getElementById('ttl').textContent = '67 ' + CHAR.label + ' — Move Test';
+document.title = '67 ' + CHAR.label + ' — Move Test';
+if (NORMAL) { document.querySelector('.power').hidden = true; document.getElementById('bPower').hidden = true; document.getElementById('hintPower').hidden = true; document.getElementById('hintPad').textContent = 'Gamepad: L-stick move · R-stick look · A jump · L3 sprint'; } document.getElementById('ttl').textContent = '67 ' + CHAR.label + ' — Move Test';
 
 // ---------- hero ----------
 const hero = new THREE.Group(); scene.add(hero);
@@ -470,6 +485,7 @@ function jumpPressed() {
   }
 }
 function powerPressed() {
+  if (NORMAL) return;
   if (S.powerCd > 0 || S.lockT > 0) return;
   S.powerCd = 2.4; S.powerT = 1.0; S.lockT = S.grounded ? 0.55 : 0.2;
   if (S.grounded) play('celebrate', 0.08, 1.4);
@@ -517,7 +533,7 @@ function update(dt) {
       const hard = S.fallPeak < -11 || (S.hover && S.fallPeak < -1); S.hover = false;
       S.landT = 0.22; play('land', 0.05, 1.6); S.squash = S.fallPeak < -11 ? 1 : 0.55;
       const c = new THREE.Vector3(S.pos.x, g, S.pos.z);
-      if (S.fallPeak < -11) { burstShards(c.clone().setY(g + 0.2), 22, 1.0); ring(c, C.white, { r0: 0.4, r1: 5.5, life: 0.5, width: 0.16 }); ring(c, C.elec, { r0: 0.3, r1: 3.2, life: 0.45, width: 0.28 }); shake = 0.4; flash(0.35);
+      if (S.fallPeak < -11) { burstShards(c.clone().setY(g + 0.2), 22, 1.0); ring(c, C.white, { r0: 0.4, r1: 5.5, life: 0.5, width: 0.16 }); ring(c, C.elec, { r0: 0.3, r1: 3.2, life: 0.45, width: 0.28 }); shake = 0.4; if (!NORMAL) flash(0.35);
         for (let i = 0; i < 8; i++) { const a = (i / 8) * 6.28 + 0.2; emitBolt(c.clone().setY(g + 0.15), new THREE.Vector3(Math.cos(a) * 4.5, 2.5, Math.sin(a) * 4.5), 0.7 + Math.random() * 0.3, 0.28, 1.2, i % 2 ? C.elec : C.white); }
         for (let i = 0; i < 32; i++) { const a = (i / 32) * 6.28, sp = 3.5 + Math.random() * 2.5; emitSpray(c.clone().setY(g + 0.1), new THREE.Vector3(Math.cos(a) * sp, 1.2 + Math.random() * 2.2, Math.sin(a) * sp), 0.2 + Math.random() * 0.25, 0.35 + Math.random() * 0.2, 0.8 + Math.random() * 0.4, boltCol()); } for (let i = 0; i < 40; i++) { const a = Math.random() * 6.28; dust.emit(c.clone().setY(g + 0.1), new THREE.Vector3(Math.cos(a) * 5, 1.5, Math.sin(a) * 5), 0.7, 1.6); } }
       else { for (let i = 0; i < 8; i++) { const a = Math.random() * 6.28; dust.emit(c.clone().setY(g + 0.08), new THREE.Vector3(Math.cos(a) * 2.0, 0.6, Math.sin(a) * 2.0), 0.45, 0.8); } for (let i = 0; i < 12; i++) { const a = (i / 12) * 6.28, sp = 1.6 + Math.random() * 1.2; emitSpray(c.clone().setY(g + 0.08), new THREE.Vector3(Math.cos(a) * sp, 0.6 + Math.random() * 1.2, Math.sin(a) * sp), 0.14 + Math.random() * 0.16, 0.3 + Math.random() * 0.15, 0.6 + Math.random() * 0.3, boltCol()); } for (let i = 0; i < 3; i++) { const a = (i / 3) * 6.28 + Math.random(); emitBolt(c.clone().setY(g + 0.12), new THREE.Vector3(Math.cos(a) * 1.8, 1.6, Math.sin(a) * 1.8), 0.35 + Math.random() * 0.2, 0.18, 0.9, C.elec); } ring(c, C.elec, { r0: 0.3, r1: 2.4, life: 0.3, width: 0.5 }); }
@@ -541,14 +557,14 @@ function update(dt) {
   if (mixer) mixer.update(dt);
   S.squash = Math.max(0, S.squash - dt * 5.5); S.stretch = Math.max(0, S.stretch - dt * 6);
   if (model) { const q = S.squash * 0.28, st = S.stretch * 0.14; model.scale.set(heroScale * (1 + q * 0.5 - st * 0.35), heroScale * (1 - q + st), heroScale * (1 + q * 0.5 - st * 0.35)); }
-  updateSpray(dt);
+  updateSpray(dt); updatePrints(dt);
   // effects: sprint bubble + trail + fov
   const sprintOn = S.sprint >= 0.5;
   if (sprintOn && !S.wasSprint) S.boostT = 1.25;   // sprint basladi -> kisa boost: balon + ekran hiz cizgileri (videodaki GO ani)
   S.wasSprint = sprintOn; S.boostT = Math.max(0, S.boostT - dt);
   if (!moving && pad.sprint) pad.sprint = false;
   const boost = Math.min(1, S.boostT / 0.35) * Math.min(1, S.sprint * 2);
-  bubble.visible = boost > 0.02; bubble.position.set(S.pos.x, S.pos.y + 0.57 * CHAR.height, S.pos.z); bubble.material.uniforms.uT.value = tSec; bubble.material.uniforms.uA.value = boost * 0.9;
+  bubble.visible = !NORMAL && boost > 0.02; bubble.position.set(S.pos.x, S.pos.y + 0.57 * CHAR.height, S.pos.z); bubble.material.uniforms.uT.value = tSec; bubble.material.uniforms.uA.value = boost * 0.9;
   bubble.scale.setScalar((0.85 + 0.15 * boost + Math.sin(tSec * 9) * 0.02 * boost) * (CHAR.height / 1.5));
   // rüzgar yayları: önden doğup iki yandan arkaya süpürür (karakterin üstünden geçmez)
   if (S.sprint > 0.05 && S.speed > 6) {
@@ -560,6 +576,7 @@ function update(dt) {
       emitWindArc(phi0, omega, 1.4 + Math.random() * 0.8, 0.15 + Math.random() * 1.8, 0.34 + Math.random() * 0.1, 0.8 + Math.random() * 0.7, Math.random() < 0.7 ? C.white : C.ice);
     }
   }
+  if (S.grounded && S.speed > 0.8 && S.speed <= 5.5) { S.stepT = (S.stepT || 0) - dt; if (S.stepT <= 0) { S.stepT = 0.42; printSide = -printSide; emitPrint(S.pos.x + hz * 0.13 * printSide, S.pos.z - hx * 0.13 * printSide, groundAt(S.pos.x, S.pos.z), S.heading); } }
   // koşu tozu: videodaki gibi — ayakların hemen arkasında beliren dikenli beyaz bulut,
   // olduğu yerde kalır, hafif şişip söner; karakter ilerledikçe arkada düz bir çizgi bırakır
   if (S.grounded && S.speed > 5.5) {
@@ -568,6 +585,7 @@ function update(dt) {
       S.trailT = S.sprint > 0.5 ? 0.11 : 0.19;
       const c = new THREE.Vector3(S.pos.x - hx * 0.35, S.pos.y + 0.04, S.pos.z - hz * 0.35);
       const big = 0.75 + 0.45 * S.sprint;
+      printSide = -printSide; emitPrint(S.pos.x - hx * 0.15 + hz * 0.13 * printSide, S.pos.z - hz * 0.15 - hx * 0.13 * printSide, groundAt(S.pos.x, S.pos.z), S.heading);
       // dikenli parçalar: her yöne kısa, hafif yukarı, yerinde patlayan küçük küme
       const n = 5 + Math.round(2 * S.sprint);
       for (let i = 0; i < n; i++) {
